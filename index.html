@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Road Distance Calculator</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <style>
+        #map { height: 500px; width: 100%; }
+        .controls { display: flex; gap: 10px; margin: 10px; }
+        #toggleButton, #clearButton, #addPointButton {
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            width: 200px;
+        }
+        .enabled { background-color: red; color: white; }
+        .disabled { background-color: blue; color: white; }
+        .popup-image { width: 150px; height: 100px; }
+    </style>
+</head>
+<body>
+    <h1>Road Distance Calculator</h1>
+    
+    <div class="controls">
+        <button id="toggleButton" class="enabled">Restrict to Road Points</button>
+        <button id="clearButton">Clear Points</button>
+        <button id="addPointButton">+</button>
+        <label>
+            <input type="checkbox" id="trackCheckbox"> Show Distance Track
+        </label>
+        <label>
+            Speed (km/h): <input type="number" id="speedInput" min="1" value="50">
+        </label>
+    </div>
+    
+    <div id="map"></div>
+    <p id="distance"></p>
+    <p id="timeEstimate"></p>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        var map = L.map('map').setView([-0.425, 36.875], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        var roadPoints = [
+            { coords: [-0.425291, 36.875120], img: "image1.png", name: "Point 1" },
+            { coords: [-0.426084, 36.875490], img: "image2.png", name: "Point 2" },
+            { coords: [-0.426695, 36.875673], img: "image3.jpg", name: "Point 3" },
+            { coords: [-0.427980, 36.876096], img: "image4.jpg", name: "Point 4" },
+            { coords: [-0.429014, 36.876524], img: "image5.jpg", name: "Point 5" },
+            { coords: [-0.429687, 36.876890], img: "https://example.com/image6.jpg", name: "Point 6" }
+        ];
+
+        var polyline = L.polyline(roadPoints.map(p => p.coords), {color: 'red', weight: 3}).addTo(map);
+        var clickedPoints = [];
+        var trackedPath = null;
+        var startMarker = null;
+        var endMarker = null;
+        var restrictToRoadPoints = true;
+
+        document.getElementById("toggleButton").addEventListener("click", function() {
+            restrictToRoadPoints = !restrictToRoadPoints;
+            this.textContent = restrictToRoadPoints ? "Restrict to Road Points" : "Select Anywhere";
+            this.className = restrictToRoadPoints ? "enabled" : "disabled";
+        });
+
+        document.getElementById("clearButton").addEventListener("click", function() {
+            clickedPoints = [];
+            document.getElementById("distance").innerText = "";
+            document.getElementById("timeEstimate").innerText = "";
+            if (trackedPath) {
+                map.removeLayer(trackedPath);
+                trackedPath = null;
+            }
+            if (startMarker) {
+                map.removeLayer(startMarker);
+                startMarker = null;
+            }
+            if (endMarker) {
+                map.removeLayer(endMarker);
+                endMarker = null;
+            }
+        });
+
+        roadPoints.forEach(function(point) {
+            var marker = L.circleMarker(point.coords, {radius: 8, color: 'yellow'}).addTo(map);
+
+            marker.bindPopup(`<strong>${point.name}</strong><br>
+                <img class='popup-image' src="${point.img}" alt="Location Image">`);
+
+            marker.on("mouseover", function() { this.openPopup(); });
+            marker.on("mouseout", function() { this.closePopup(); });
+
+            marker.on("click", function() {
+                var markerLatLng = marker.getLatLng();
+                if (restrictToRoadPoints) {
+                    clickedPoints = findSequentialPath(markerLatLng);
+                } else {
+                    clickedPoints.push(markerLatLng);
+                }
+
+                updateMarkers();
+                updateDistanceAndTrack();
+            });
+        });
+
+        document.getElementById("addPointButton").addEventListener("click", function() {
+            restrictToRoadPoints = false;
+            updateMarkers();
+        });
+
+        function findSequentialPath(selectedPoint) {
+            var startIdx = roadPoints.findIndex(p => JSON.stringify(p.coords) === JSON.stringify([selectedPoint.lat, selectedPoint.lng]));
+            var sortedPoints = roadPoints.map(p => p.coords);
+
+            if (clickedPoints.length === 0) return [selectedPoint];
+
+            var firstPoint = clickedPoints[0];
+            var firstIdx = sortedPoints.findIndex(p => JSON.stringify(p) === JSON.stringify([firstPoint.lat, firstPoint.lng]));
+
+            var path = sortedPoints.slice(Math.min(firstIdx, startIdx), Math.max(firstIdx, startIdx) + 1);
+            return path.map(coords => L.latLng(coords[0], coords[1]));
+        }
+
+        function updateMarkers() {
+            if (startMarker) map.removeLayer(startMarker);
+            if (endMarker) map.removeLayer(endMarker);
+
+            if (clickedPoints.length > 0) {
+                startMarker = L.marker(clickedPoints[0], {icon: L.icon({iconUrl: "https://maps.google.com/mapfiles/ms/icons/green-dot.png"})}).addTo(map);
+            }
+            if (clickedPoints.length >= 2) {
+                endMarker = L.marker(clickedPoints[clickedPoints.length - 1], {icon: L.icon({iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png"})}).addTo(map);
+            }
+        }
+
+        function updateDistanceAndTrack() {
+            if (clickedPoints.length >= 2) {
+                var distance = calculateTotalDistance(clickedPoints);
+                var speed = parseFloat(document.getElementById("speedInput").value);
+                var time = distance / (speed * 1000 / 60);
+
+                document.getElementById("distance").innerText = `Total Distance: ${distance.toFixed(2)} meters`;
+                document.getElementById("timeEstimate").innerText = `Estimated Travel Time: ${time.toFixed(2)} minutes`;
+
+                if (document.getElementById("trackCheckbox").checked) {
+                    if (trackedPath) map.removeLayer(trackedPath);
+                    trackedPath = L.polyline(clickedPoints, {color: "green", weight: 2}).addTo(map);
+                }
+            }
+        }
+
+        function calculateTotalDistance(points) {
+            var totalDistance = 0;
+            for (var i = 0; i < points.length - 1; i++) {
+                totalDistance += points[i].distanceTo(points[i + 1]);
+            }
+            return totalDistance;
+        }
+
+        map.fitBounds(polyline.getBounds());
+    </script>
+</body>
+</html>
